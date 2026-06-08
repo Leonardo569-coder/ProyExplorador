@@ -50,11 +50,14 @@
                     <ComboBoxItem Tag="JSON">JSON</ComboBoxItem>
                     <ComboBoxItem Tag="XML">XML</ComboBoxItem>
                     <ComboBoxItem Tag="CSV">CSV</ComboBoxItem>
+                    <ComboBoxItem Tag="PDF">PDF</ComboBoxItem>
+                    <ComboBoxItem Tag="DOCX">Word (DOCX)</ComboBoxItem>
+                    <ComboBoxItem Tag="XLSX">Excel (XLSX)</ComboBoxItem>
                 </ComboBox>
             </StackPanel>
 
             <StackPanel Grid.Row="1" Orientation="Horizontal">
-                <Button x:Name="BtnConvertir" Content="Convertir" Width="120" Height="34" Click="BtnConvertir_Click"
+                <Button x:Name="BtnConvertir" Content="Convertir" Width="120" Height="39" Click="BtnConvertir_Click"
                         Style="{StaticResource BtnPrimary}"/>
                 <Button x:Name="BtnGuardarComo" Content="Guardar Como" Width="120" Height="34" Margin="8,0,0,0"
                         Click="BtnGuardarComo_Click" Style="{StaticResource BtnGhost}"/>

@@ -25,7 +25,7 @@ namespace ProyExplorador.Views
             try
             {
                 var dlg = new OpenFileDialog();
-                dlg.Filter = "Todos los archivos|*.*|Documentos|*.txt;*.json;*.xml;*.csv";
+                dlg.Filter = "Todos los archivos|*.*|Documentos|*.txt;*.json;*.xml;*.csv;*.pdf;*.docx;*.xlsx|Archivos PDF|*.pdf|Documentos Word|*.docx|Hojas de Cálculo|*.xlsx";
                 if (dlg.ShowDialog(this) == true)
                 {
                     TxtRutaArchivo.Text = dlg.FileName;
@@ -80,7 +80,7 @@ namespace ProyExplorador.Views
             try
             {
                 var dlg = new SaveFileDialog();
-                dlg.Filter = "TXT (*.txt)|*.txt|JSON (*.json)|*.json|XML (*.xml)|*.xml|CSV (*.csv)|*.csv";
+                dlg.Filter = "TXT (*.txt)|*.txt|JSON (*.json)|*.json|XML (*.xml)|*.xml|CSV (*.csv)|*.csv|PDF (*.pdf)|*.pdf|Word (*.docx)|*.docx|Excel (*.xlsx)|*.xlsx";
                 if (dlg.ShowDialog(this) == true)
                 {
                     MostrarEstado("Guardando...");

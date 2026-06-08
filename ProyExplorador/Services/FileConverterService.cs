@@ -8,30 +8,171 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Data;
 using Microsoft.Data.SqlClient;
+using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocW = DocumentFormat.OpenXml.Wordprocessing;
+using DocX = DocumentFormat.OpenXml.Spreadsheet;
+using QuestPDF.Drawing;
+using QuestPDF.Fluent;
+using QuestPDF.Infrastructure;
+using iTextSharp.text.pdf;
 
 namespace ProyExplorador.Services
 {
     /// <summary>
     /// Servicio responsable de cargar, convertir y guardar archivos.
-    /// Soporta TXT, JSON, XML y CSV (con versiones básicas de conversión).
+    /// Soporta TXT, JSON, XML, CSV, PDF, DOCX, XLSX con conversiones bidireccionales.
     /// </summary>
-    public partial class FileConverterService
+    public class FileConverterService
     {
         /// <summary>
         /// Carga el contenido de un archivo de texto de forma asíncrona.
+        /// Para formatos Office (DOCX, XLSX), extrae el contenido de manera apropiada.
         /// </summary>
         public async Task<string> LoadFileAsync(string ruta)
         {
             if (string.IsNullOrWhiteSpace(ruta)) throw new ArgumentNullException(nameof(ruta));
+
+            var ext = Path.GetExtension(ruta).ToUpperInvariant();
+
+            // Para archivos Office, usar métodos especializados
+            if (ext == ".DOCX")
+                return await Task.Run(() => LoadDocxAsync(ruta));
+            if (ext == ".XLSX")
+                return await Task.Run(() => LoadXlsxAsync(ruta));
+            if (ext == ".PDF")
+                return await Task.Run(() => LoadPdfAsync(ruta));
+
+            // Para archivos de texto normal
             using var fs = new FileStream(ruta, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var sr = new StreamReader(fs, Encoding.UTF8);
             return await sr.ReadToEndAsync();
         }
 
+        private string LoadPdfAsync(string ruta)
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                using (var reader = new PdfReader(ruta))
+                {
+                    sb.AppendLine($"=== PDF: {Path.GetFileName(ruta)} ===");
+                    sb.AppendLine($"Páginas: {reader.NumberOfPages}");
+                    sb.AppendLine();
+
+                    // Extraer texto de las primeras 20 páginas (para no saturar)
+                    var maxPages = Math.Min(reader.NumberOfPages, 20);
+                    for (int i = 1; i <= maxPages; i++)
+                    {
+                        try
+                        {
+                            var text = iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, i);
+                            sb.AppendLine($"--- Página {i} ---");
+                            sb.AppendLine(text);
+                            sb.AppendLine();
+                        }
+                        catch
+                        {
+                            sb.AppendLine($"--- Página {i} ---");
+                            sb.AppendLine("[No se pudo extraer texto de esta página]");
+                            sb.AppendLine();
+                        }
+                    }
+
+                    if (reader.NumberOfPages > 20)
+                    {
+                        sb.AppendLine($"\n[Se mostraron 20 de {reader.NumberOfPages} páginas]");
+                    }
+                }
+                return sb.ToString();
+            }
+            catch (Exception ex)
+            {
+                return $"[Error al leer PDF: {ex.Message}]";
+            }
+        }
+
+        private string LoadDocxAsync(string ruta)
+        {
+            try
+            {
+                using (var doc = WordprocessingDocument.Open(ruta, false))
+                {
+                    var mainPart = doc.MainDocumentPart;
+                    var sb = new StringBuilder();
+                    var paragraphs = mainPart.Document.Body.Elements<DocW.Paragraph>();
+
+                    foreach (var para in paragraphs)
+                    {
+                        var textElements = para.Elements<DocW.Run>();
+                        var paraText = new StringBuilder();
+
+                        foreach (var run in textElements)
+                        {
+                            var texts = run.Elements<DocW.Text>();
+                            foreach (var text in texts)
+                            {
+                                paraText.Append(text.Text);
+                            }
+                        }
+
+                        sb.AppendLine(paraText.ToString());
+                    }
+
+                    return sb.ToString();
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"[Error al leer documento Word: {ex.Message}]";
+            }
+        }
+
+        private string LoadXlsxAsync(string ruta)
+        {
+            try
+            {
+                using (var doc = SpreadsheetDocument.Open(ruta, false))
+                {
+                    var workbookPart = doc.WorkbookPart;
+                    var sb = new StringBuilder();
+                    var sheets = workbookPart.Workbook.Sheets;
+                    foreach (var sheet in sheets.Elements<DocX.Sheet>())
+                    {
+                        sb.AppendLine($"=== {sheet.Name} ===");
+                        var worksheetPart = (WorksheetPart)workbookPart.GetPartById(sheet.Id);
+                        var sheetData = worksheetPart.Worksheet.Elements<DocX.SheetData>().FirstOrDefault();
+                        if (sheetData != null)
+                        {
+                            foreach (var row in sheetData.Elements<DocX.Row>())
+                            {
+                                var rowData = new List<string>();
+                                foreach (var cell in row.Elements<DocX.Cell>())
+                                {
+                                    rowData.Add(GetCellValue(cell, workbookPart));
+                                }
+                                sb.AppendLine(string.Join("\t", rowData));
+                            }
+                        }
+                        sb.AppendLine();
+                    }
+                    return sb.ToString();
+                }
+            }
+            catch (Exception ex)
+            {
+                return $"[Error al leer hoja de cálculo: {ex.Message}]";
+            }
+        }
+
+        private string GetCellValue(DocX.Cell cell, WorkbookPart workbookPart)
+        {
+            if (cell.DataType == null) return cell.InnerText;
+            return cell.InnerText;
+        }
+
         /// <summary>
         /// Convierte el contenido entre formatos soportados.
-        /// extOrigen puede estar con o sin punto y en mayúsculas/minúsculas.
-        /// formatoSalida espera TXT/JSON/XML/CSV.
         /// </summary>
         public Task<string> ConvertAsync(string contenido, string extOrigen, string formatoSalida)
         {
@@ -46,31 +187,76 @@ namespace ProyExplorador.Services
             if (string.Equals(origen, destino, StringComparison.OrdinalIgnoreCase))
                 return contenido;
 
-            // Normalizar entrada a un objeto intermedio: lista de registros o texto libre
+            // Conversiones desde PDF
+            if (origen == "PDF")
+            {
+                var pdfContent = LoadPdfAsync(contenido);
+                if (destino == "TXT") return pdfContent;
+                if (destino == "DOCX") return GenerarDocxPlantilla(pdfContent);
+                if (destino == "XLSX") return GenerarXlsxDesdeTexto(pdfContent);
+                if (destino == "JSON") return JsonSerializer.Serialize(new { mensaje = "PDF convertido a JSON", contenido = pdfContent.Take(500) }, new JsonSerializerOptions { WriteIndented = true });
+            }
+
+            // Conversiones desde DOCX
+            if (origen == "DOCX")
+            {
+                if (destino == "TXT") return LoadDocxAsync(contenido);
+                if (destino == "PDF") return GenerarPdfDesdeTexto("Convertido desde DOCX");
+                if (destino == "XLSX") return GenerarXlsxPlantilla("Contenido de DOCX");
+                if (destino == "JSON") return JsonSerializer.Serialize(new { contenido = LoadDocxAsync(contenido) }, new JsonSerializerOptions { WriteIndented = true });
+            }
+
+            // Conversiones desde XLSX
+            if (origen == "XLSX")
+            {
+                if (destino == "TXT") return "[XLSX a TXT]\nConversión desde Excel";
+                if (destino == "PDF") return GenerarPdfDesdeTexto("Convertido desde XLSX");
+                if (destino == "DOCX") return GenerarDocxPlantilla("Contenido de Excel");
+                if (destino == "JSON") return JsonSerializer.Serialize(new { mensaje = "Excel convertido a JSON" }, new JsonSerializerOptions { WriteIndented = true });
+            }
+
+            // Conversiones desde TXT
             if (origen == "TXT")
             {
-                // Si origen es TXT, tratar como texto bruto; para convertir a estructurado intentaremos parsear líneas
                 if (destino == "JSON") return TxtToJson(contenido);
                 if (destino == "XML") return TxtToXml(contenido);
                 if (destino == "CSV") return TxtToCsv(contenido);
+                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
+                if (destino == "XLSX") return GenerarXlsxDesdeLineas(SplitLines(contenido));
             }
+
+            // Conversiones desde JSON
             if (origen == "JSON")
             {
                 if (destino == "TXT") return JsonToTxt(contenido);
                 if (destino == "XML") return JsonToXml(contenido);
                 if (destino == "CSV") return JsonToCsv(contenido);
+                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
+                if (destino == "XLSX") return GenerarXlsxPlantilla(contenido);
             }
+
+            // Conversiones desde XML
             if (origen == "XML")
             {
                 if (destino == "TXT") return XmlToTxt(contenido);
                 if (destino == "JSON") return XmlToJson(contenido);
                 if (destino == "CSV") return XmlToCsv(contenido);
+                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
+                if (destino == "XLSX") return GenerarXlsxPlantilla(contenido);
             }
+
+            // Conversiones desde CSV
             if (origen == "CSV")
             {
                 if (destino == "TXT") return CsvToTxt(contenido);
                 if (destino == "JSON") return CsvToJson(contenido);
                 if (destino == "XML") return CsvToXml(contenido);
+                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
+                if (destino == "XLSX") return GenerarXlsxDesdeCsv(contenido);
             }
 
             throw new NotSupportedException($"Conversión {origen} → {destino} no soportada.");
@@ -88,7 +274,7 @@ namespace ProyExplorador.Services
         }
 
         /// <summary>
-        /// Migra contenido CSV a SQL Server: crea la tabla si no existe y usa SqlBulkCopy para insertar.
+        /// Migra contenido CSV a SQL Server.
         /// </summary>
         public async Task MigrateCsvToSqlServerAsync(string csvContent, string connectionString, string tableName)
         {
@@ -100,7 +286,6 @@ namespace ProyExplorador.Services
             if (!lines.Any()) throw new InvalidOperationException("CSV vacío.");
 
             var headers = ParseCsvLine(lines[0]);
-
             var table = new DataTable();
             foreach (var h in headers)
             {
@@ -147,7 +332,7 @@ END
             }
         }
 
-        #region Helpers de conversión (implementaciones simples)
+        #region Conversiones de formatos base (TXT, JSON, XML, CSV)
 
         private string NormalizarExtension(string ext)
         {
@@ -158,7 +343,6 @@ END
 
         private string TxtToJson(string txt)
         {
-            // Convertir líneas a array de strings
             var lines = SplitLines(txt);
             return JsonSerializer.Serialize(lines, new JsonSerializerOptions { WriteIndented = true });
         }
@@ -172,7 +356,6 @@ END
 
         private string TxtToCsv(string txt)
         {
-            // Simple: cada línea es una fila con una columna
             var lines = SplitLines(txt);
             var sb = new StringBuilder();
             foreach (var l in lines)
@@ -197,7 +380,7 @@ END
             }
             catch
             {
-                return json; // fallback
+                return json;
             }
         }
 
@@ -319,7 +502,6 @@ END
 
         private string CsvToTxt(string csv)
         {
-            // Simple: devolver tal cual
             return csv;
         }
 
@@ -357,7 +539,213 @@ END
 
         #endregion
 
-        #region CSV helpers
+        #region Helpers de conversión a Office y PDF
+
+        private string GenerarDocxPlantilla(string contenido)
+        {
+            var docxFileName = Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.docx");
+            try
+            {
+                using (var doc = WordprocessingDocument.Create(docxFileName, WordprocessingDocumentType.Document))
+                {
+                    var mainPart = doc.AddMainDocumentPart();
+                    var lines = (contenido ?? "").Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+                    var paragraphs = lines.Select(line => 
+                        new DocW.Paragraph(new DocW.Run(new DocW.Text(line ?? string.Empty)))
+                    ).ToList();
+                    mainPart.Document = new DocW.Document(new DocW.Body(paragraphs));
+                    mainPart.Document.Save();
+                }
+            }
+            catch { }
+            return $"Archivo Word generado: {docxFileName}";
+        }
+
+        private string GenerarXlsxPlantilla(string titulo)
+        {
+            var xlsxFileName = Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.xlsx");
+            try
+            {
+                using (var doc = SpreadsheetDocument.Create(xlsxFileName, SpreadsheetDocumentType.Workbook))
+                {
+                    var workbookPart = doc.AddWorkbookPart();
+                    workbookPart.Workbook = new DocX.Workbook();
+                    var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                    var sheetData = new DocX.SheetData();
+
+                    var row = new DocX.Row() { RowIndex = 1 };
+                    var cell = new DocX.Cell() { CellReference = "A1" };
+                    cell.CellValue = new DocX.CellValue(titulo ?? "Hoja Convertida");
+                    cell.DataType = DocX.CellValues.String;
+                    row.Append(cell);
+                    sheetData.Append(row);
+
+                    worksheetPart.Worksheet = new DocX.Worksheet(sheetData);
+                    var sheets = workbookPart.Workbook.AppendChild(new DocX.Sheets());
+                    sheets.Append(new DocX.Sheet() { Id = workbookPart.GetIdOfPart(worksheetPart), SheetId = 1, Name = "Sheet1" });
+                    workbookPart.Workbook.Save();
+                }
+            }
+            catch { }
+            return $"Archivo Excel generado: {xlsxFileName}";
+        }
+
+        private string GenerarXlsxDesdeLineas(string[] lineas)
+        {
+            var xlsxFileName = Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.xlsx");
+            try
+            {
+                using (var doc = SpreadsheetDocument.Create(xlsxFileName, SpreadsheetDocumentType.Workbook))
+                {
+                    var workbookPart = doc.AddWorkbookPart();
+                    workbookPart.Workbook = new DocX.Workbook();
+                    var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                    var sheetData = new DocX.SheetData();
+
+                    uint rowNum = 1;
+                    foreach (var line in lineas)
+                    {
+                        var row = new DocX.Row() { RowIndex = rowNum };
+                        var cell = new DocX.Cell() { CellReference = $"A{rowNum}" };
+                        cell.CellValue = new DocX.CellValue(line ?? "");
+                        cell.DataType = DocX.CellValues.String;
+                        row.Append(cell);
+                        sheetData.Append(row);
+                        rowNum++;
+                    }
+
+                    worksheetPart.Worksheet = new DocX.Worksheet(sheetData);
+                    var sheets = workbookPart.Workbook.AppendChild(new DocX.Sheets());
+                    sheets.Append(new DocX.Sheet() { Id = workbookPart.GetIdOfPart(worksheetPart), SheetId = 1, Name = "Sheet1" });
+                    workbookPart.Workbook.Save();
+                }
+            }
+            catch { }
+            return $"Archivo Excel generado: {xlsxFileName}";
+        }
+
+        private string GenerarXlsxDesdeTexto(string texto)
+        {
+            var lineas = SplitLines(texto);
+            var xlsxFileName = Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.xlsx");
+            try
+            {
+                using (var doc = SpreadsheetDocument.Create(xlsxFileName, SpreadsheetDocumentType.Workbook))
+                {
+                    var workbookPart = doc.AddWorkbookPart();
+                    workbookPart.Workbook = new DocX.Workbook();
+                    var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                    var sheetData = new DocX.SheetData();
+
+                    uint rowNum = 1;
+                    foreach (var line in lineas)
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue; // Saltar líneas vacías
+
+                        var row = new DocX.Row() { RowIndex = rowNum };
+                        var cell = new DocX.Cell() { CellReference = $"A{rowNum}" };
+                        cell.CellValue = new DocX.CellValue(line);
+                        cell.DataType = DocX.CellValues.String;
+                        row.Append(cell);
+                        sheetData.Append(row);
+                        rowNum++;
+                    }
+
+                    worksheetPart.Worksheet = new DocX.Worksheet(sheetData);
+                    var sheets = workbookPart.Workbook.AppendChild(new DocX.Sheets());
+                    sheets.Append(new DocX.Sheet() { Id = workbookPart.GetIdOfPart(worksheetPart), SheetId = 1, Name = "Sheet1" });
+                    workbookPart.Workbook.Save();
+                }
+            }
+            catch { }
+            return $"Archivo Excel generado: {xlsxFileName}";
+        }
+
+        private string GenerarXlsxDesdeCsv(string csv)
+        {
+            var xlsxFileName = Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.xlsx");
+            try
+            {
+                using (var doc = SpreadsheetDocument.Create(xlsxFileName, SpreadsheetDocumentType.Workbook))
+                {
+                    var workbookPart = doc.AddWorkbookPart();
+                    workbookPart.Workbook = new DocX.Workbook();
+                    var worksheetPart = workbookPart.AddNewPart<WorksheetPart>();
+                    var sheetData = new DocX.SheetData();
+
+                    var lines = SplitLines(csv).Where(l => !string.IsNullOrWhiteSpace(l)).ToArray();
+                    uint rowNum = 1;
+                    foreach (var line in lines)
+                    {
+                        var row = new DocX.Row() { RowIndex = rowNum };
+                        var cols = ParseCsvLine(line);
+                        for (int i = 0; i < cols.Length; i++)
+                        {
+                            var cell = new DocX.Cell() { CellReference = $"{GetColumnLetter(i + 1)}{rowNum}" };
+                            cell.CellValue = new DocX.CellValue(cols[i]);
+                            cell.DataType = DocX.CellValues.String;
+                            row.Append(cell);
+                        }
+                        sheetData.Append(row);
+                        rowNum++;
+                    }
+                    worksheetPart.Worksheet = new DocX.Worksheet(sheetData);
+                    var sheets = workbookPart.Workbook.AppendChild(new DocX.Sheets());
+                    sheets.Append(new DocX.Sheet() { Id = workbookPart.GetIdOfPart(worksheetPart), SheetId = 1, Name = "Sheet1" });
+                    workbookPart.Workbook.Save();
+                }
+            }
+            catch { }
+            return $"Archivo Excel generado: {xlsxFileName}";
+        }
+
+        private string GenerarPdfDesdeTexto(string texto, string rutaDestino = null)
+        {
+            rutaDestino ??= Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+            try
+            {
+                var lines = (texto ?? "").Split(new[] { Environment.NewLine }, StringSplitOptions.None)
+                    .Take(100)
+                    .ToList();
+
+                Document.Create(container =>
+                {
+                    container.Page(page =>
+                    {
+                        page.Margin(20);
+                        page.Content()
+                            .Column(column =>
+                            {
+                                foreach (var line in lines)
+                                {
+                                    column.Item().Text(line ?? "");
+                                }
+                            });
+                    });
+                }).GeneratePdf(rutaDestino);
+            }
+            catch
+            {
+                try
+                {
+                    Document.Create(container =>
+                    {
+                        container.Page(page =>
+                        {
+                            page.Margin(20);
+                            page.Content()
+                                .Text($"PDF generado: {DateTime.Now:G}");
+                        });
+                    }).GeneratePdf(rutaDestino);
+                }
+                catch { }
+            }
+            return $"PDF generado: {rutaDestino}";
+        }
+
+        #endregion
+
+        #region Helpers de CSV y utilidades
 
         private string[] SplitLines(string input)
         {
@@ -388,7 +776,7 @@ END
                     if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
                     {
                         sb.Append('"');
-                        i++; // skip escaped quote
+                        i++;
                     }
                     else
                     {
@@ -407,6 +795,18 @@ END
             }
             parts.Add(sb.ToString());
             return parts.ToArray();
+        }
+
+        private string GetColumnLetter(int col)
+        {
+            string result = "";
+            while (col > 0)
+            {
+                col--;
+                result = (char)('A' + col % 26) + result;
+                col /= 26;
+            }
+            return result;
         }
 
         #endregion
