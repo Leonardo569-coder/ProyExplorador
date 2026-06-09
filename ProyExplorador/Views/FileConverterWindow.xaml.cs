@@ -12,6 +12,7 @@ namespace ProyExplorador.Views
     {
         private readonly FileConverterService _servicio;
         private string _contenidoOriginal = string.Empty;
+        private string _rutaArchivoOriginal = string.Empty;
 
         public FileConverterWindow()
         {
@@ -29,6 +30,7 @@ namespace ProyExplorador.Views
                 if (dlg.ShowDialog(this) == true)
                 {
                     TxtRutaArchivo.Text = dlg.FileName;
+                    _rutaArchivoOriginal = dlg.FileName;
                     await CargarArchivoAsync(dlg.FileName);
                 }
             }
@@ -65,13 +67,94 @@ namespace ProyExplorador.Views
 
                 var formatoSalida = ((System.Windows.Controls.ComboBoxItem)CmbFormatoSalida.SelectedItem).Tag.ToString();
                 MostrarEstado("Convirtiendo...");
-                var resultado = await _servicio.ConvertAsync(_contenidoOriginal, Path.GetExtension(TxtRutaArchivo.Text), formatoSalida);
-                PreviewTextBox.Text = resultado;
-                MostrarEstado("Conversión completada");
+
+                // Si es conversión a PDF o DOCX o XLSX, mostrar diálogo de guardar
+                if (formatoSalida.Equals("PDF", StringComparison.OrdinalIgnoreCase) ||
+                    formatoSalida.Equals("DOCX", StringComparison.OrdinalIgnoreCase) ||
+                    formatoSalida.Equals("XLSX", StringComparison.OrdinalIgnoreCase))
+                {
+                    var dlg = new SaveFileDialog();
+                    dlg.Filter = formatoSalida switch
+                    {
+                        "PDF" => "Archivos PDF|*.pdf",
+                        "DOCX" => "Documentos Word|*.docx",
+                        "XLSX" => "Hojas de Cálculo|*.xlsx",
+                        _ => "Todos los archivos|*.*"
+                    };
+                    dlg.FileName = Path.GetFileNameWithoutExtension(TxtRutaArchivo.Text) + "_convertido";
+                    dlg.DefaultExt = formatoSalida.ToLower();
+
+                    if (dlg.ShowDialog(this) != true)
+                    {
+                        MostrarEstado("Conversión cancelada");
+                        return;
+                    }
+
+                    // Asegurar que el archivo tiene la extensión correcta
+                    var rutaFinal = dlg.FileName;
+                    if (!rutaFinal.EndsWith("." + formatoSalida.ToLower()))
+                    {
+                        rutaFinal = Path.GetFileNameWithoutExtension(rutaFinal) + "." + formatoSalida.ToLower();
+                        rutaFinal = Path.Combine(Path.GetDirectoryName(dlg.FileName) ?? "", rutaFinal);
+                    }
+
+                    var resultado = await _servicio.ConvertAsync(_contenidoOriginal, Path.GetExtension(_rutaArchivoOriginal), formatoSalida, rutaFinal);
+
+                    // Para PDF, mostrar mensaje informativo; para otros formatos, mostrar contenido
+                    if (formatoSalida.Equals("PDF", StringComparison.OrdinalIgnoreCase))
+                    {
+                        PreviewTextBox.Text = $"PDF generado exitosamente en:\n{rutaFinal}";
+                    }
+                    else
+                    {
+                        PreviewTextBox.Text = resultado;
+                    }
+
+                    MostrarEstado($"Conversión completada. Archivo guardado: {rutaFinal}");
+
+                    // Verificar que el archivo existe antes de ofrecer abrirlo
+                    if (!File.Exists(rutaFinal))
+                    {
+                        MessageBox.Show(this, $"Error: El archivo no se guardó correctamente en:\n{rutaFinal}\n\nVerifica que la ruta es válida y tienes permisos de escritura.", "Error al guardar", MessageBoxButton.OK, MessageBoxImage.Error);
+                        return;
+                    }
+
+                    // Ofrecer abrir el archivo
+                    var respuesta = MessageBox.Show(this, 
+                        $"Archivo guardado en:\n{rutaFinal}\n\n¿Deseas abrir el archivo?", 
+                        "Conversión Completada", 
+                        MessageBoxButton.YesNo, 
+                        MessageBoxImage.Information);
+
+                    if (respuesta == MessageBoxResult.Yes)
+                    {
+                        try
+                        {
+                            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                            {
+                                FileName = rutaFinal,
+                                UseShellExecute = true,
+                                WorkingDirectory = Path.GetDirectoryName(rutaFinal) ?? ""
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show(this, $"No se pudo abrir el archivo: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                    }
+                }
+                else
+                {
+                    // Para formatos de texto, mostrar en preview
+                    var resultado = await _servicio.ConvertAsync(_contenidoOriginal, Path.GetExtension(TxtRutaArchivo.Text), formatoSalida);
+                    PreviewTextBox.Text = resultado;
+                    MostrarEstado("Conversión completada");
+                }
             }
             catch (Exception ex)
             {
                 MostrarEstado($"Error al convertir: {ex.Message}");
+                MessageBox.Show(this, $"Error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

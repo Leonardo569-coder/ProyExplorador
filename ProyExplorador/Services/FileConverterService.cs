@@ -174,12 +174,35 @@ namespace ProyExplorador.Services
         /// <summary>
         /// Convierte el contenido entre formatos soportados.
         /// </summary>
-        public Task<string> ConvertAsync(string contenido, string extOrigen, string formatoSalida)
+        public Task<string> ConvertAsync(string contenido, string extOrigen, string formatoSalida, string rutaDestino = null)
         {
-            return Task.Run(() => ConvertSync(contenido, extOrigen, formatoSalida));
+            return Task.Run(() => ConvertSync(contenido, extOrigen, formatoSalida, rutaDestino));
         }
 
-        private string ConvertSync(string contenido, string extOrigen, string formatoSalida)
+        /// <summary>
+        /// Convierte archivos binarios directamente (DOCX, XLSX, PDF) de forma optimizada.
+        /// </summary>
+        public async Task<string> ConvertirArchivoAsync(string rutaOrigen, string formatoSalida, string rutaDestino)
+        {
+            return await Task.Run(() =>
+            {
+                var extOrigen = Path.GetExtension(rutaOrigen).ToUpperInvariant();
+                var destino = formatoSalida?.ToUpperInvariant() ?? throw new ArgumentNullException(nameof(formatoSalida));
+
+                // Conversión DOCX a PDF - extracción directa del archivo
+                if (extOrigen == ".DOCX" && destino == "PDF")
+                {
+                    var contenido = LoadDocxAsync(rutaOrigen);
+                    return GenerarPdfDesdeTexto(contenido, rutaDestino);
+                }
+
+                // Para otros casos, usar el método estándar
+                var archivoContenido = LoadFileAsync(rutaOrigen).Result;
+                return ConvertSync(archivoContenido, extOrigen, formatoSalida, rutaDestino);
+            });
+        }
+
+        private string ConvertSync(string contenido, string extOrigen, string formatoSalida, string rutaDestino = null)
         {
             var origen = NormalizarExtension(extOrigen);
             var destino = formatoSalida?.ToUpperInvariant() ?? throw new ArgumentNullException(nameof(formatoSalida));
@@ -201,7 +224,11 @@ namespace ProyExplorador.Services
             if (origen == "DOCX")
             {
                 if (destino == "TXT") return LoadDocxAsync(contenido);
-                if (destino == "PDF") return GenerarPdfDesdeTexto("Convertido desde DOCX");
+                if (destino == "PDF") 
+                {
+                    var rutaPdf = rutaDestino ?? Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+                    return GenerarPdfDesdeTexto(LoadDocxAsync(contenido), rutaPdf);
+                }
                 if (destino == "XLSX") return GenerarXlsxPlantilla("Contenido de DOCX");
                 if (destino == "JSON") return JsonSerializer.Serialize(new { contenido = LoadDocxAsync(contenido) }, new JsonSerializerOptions { WriteIndented = true });
             }
@@ -210,7 +237,11 @@ namespace ProyExplorador.Services
             if (origen == "XLSX")
             {
                 if (destino == "TXT") return "[XLSX a TXT]\nConversión desde Excel";
-                if (destino == "PDF") return GenerarPdfDesdeTexto("Convertido desde XLSX");
+                if (destino == "PDF") 
+                {
+                    var rutaPdf = rutaDestino ?? Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+                    return GenerarPdfDesdeTexto("Convertido desde XLSX", rutaPdf);
+                }
                 if (destino == "DOCX") return GenerarDocxPlantilla("Contenido de Excel");
                 if (destino == "JSON") return JsonSerializer.Serialize(new { mensaje = "Excel convertido a JSON" }, new JsonSerializerOptions { WriteIndented = true });
             }
@@ -221,7 +252,11 @@ namespace ProyExplorador.Services
                 if (destino == "JSON") return TxtToJson(contenido);
                 if (destino == "XML") return TxtToXml(contenido);
                 if (destino == "CSV") return TxtToCsv(contenido);
-                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "PDF") 
+                {
+                    var rutaPdf = rutaDestino ?? Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+                    return GenerarPdfDesdeTexto(contenido, rutaPdf);
+                }
                 if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
                 if (destino == "XLSX") return GenerarXlsxDesdeLineas(SplitLines(contenido));
             }
@@ -232,7 +267,11 @@ namespace ProyExplorador.Services
                 if (destino == "TXT") return JsonToTxt(contenido);
                 if (destino == "XML") return JsonToXml(contenido);
                 if (destino == "CSV") return JsonToCsv(contenido);
-                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "PDF") 
+                {
+                    var rutaPdf = rutaDestino ?? Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+                    return GenerarPdfDesdeTexto(contenido, rutaPdf);
+                }
                 if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
                 if (destino == "XLSX") return GenerarXlsxPlantilla(contenido);
             }
@@ -243,7 +282,11 @@ namespace ProyExplorador.Services
                 if (destino == "TXT") return XmlToTxt(contenido);
                 if (destino == "JSON") return XmlToJson(contenido);
                 if (destino == "CSV") return XmlToCsv(contenido);
-                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "PDF") 
+                {
+                    var rutaPdf = rutaDestino ?? Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+                    return GenerarPdfDesdeTexto(contenido, rutaPdf);
+                }
                 if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
                 if (destino == "XLSX") return GenerarXlsxPlantilla(contenido);
             }
@@ -254,7 +297,11 @@ namespace ProyExplorador.Services
                 if (destino == "TXT") return CsvToTxt(contenido);
                 if (destino == "JSON") return CsvToJson(contenido);
                 if (destino == "XML") return CsvToXml(contenido);
-                if (destino == "PDF") return GenerarPdfDesdeTexto(contenido);
+                if (destino == "PDF") 
+                {
+                    var rutaPdf = rutaDestino ?? Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+                    return GenerarPdfDesdeTexto(contenido, rutaPdf);
+                }
                 if (destino == "DOCX") return GenerarDocxPlantilla(contenido);
                 if (destino == "XLSX") return GenerarXlsxDesdeCsv(contenido);
             }
@@ -702,45 +749,92 @@ END
         private string GenerarPdfDesdeTexto(string texto, string rutaDestino = null)
         {
             rutaDestino ??= Path.Combine(Path.GetTempPath(), $"converted_{Guid.NewGuid()}.pdf");
+
             try
             {
-                var lines = (texto ?? "").Split(new[] { Environment.NewLine }, StringSplitOptions.None)
-                    .Take(100)
-                    .ToList();
-
-                Document.Create(container =>
+                // Asegurar que el directorio existe
+                var directorio = Path.GetDirectoryName(rutaDestino);
+                if (!string.IsNullOrWhiteSpace(directorio) && !Directory.Exists(directorio))
                 {
-                    container.Page(page =>
-                    {
-                        page.Margin(20);
-                        page.Content()
-                            .Column(column =>
-                            {
-                                foreach (var line in lines)
-                                {
-                                    column.Item().Text(line ?? "");
-                                }
-                            });
-                    });
-                }).GeneratePdf(rutaDestino);
-            }
-            catch
-            {
+                    Directory.CreateDirectory(directorio);
+                }
+
+                // Validar que el directorio es accesible
+                if (!Directory.Exists(directorio))
+                {
+                    throw new DirectoryNotFoundException($"No se puede acceder al directorio: {directorio}");
+                }
+
+                // Intentar primero con QuestPDF
                 try
                 {
+                    var lines = (texto ?? "").Split(new[] { Environment.NewLine }, StringSplitOptions.None)
+                        .Take(100)
+                        .ToList();
+
                     Document.Create(container =>
                     {
                         container.Page(page =>
                         {
                             page.Margin(20);
                             page.Content()
-                                .Text($"PDF generado: {DateTime.Now:G}");
+                                .Column(column =>
+                                {
+                                    foreach (var line in lines)
+                                    {
+                                        column.Item().Text(line ?? "");
+                                    }
+                                });
                         });
                     }).GeneratePdf(rutaDestino);
                 }
-                catch { }
+                catch
+                {
+                    // Si QuestPDF falla, usar iTextSharp como alternativa
+                    GenerarPdfConITextSharp(texto, rutaDestino);
+                }
+
+                // Verificar que el archivo se creó correctamente
+                if (!File.Exists(rutaDestino))
+                {
+                    throw new IOException($"El archivo PDF no se creó en la ruta especificada: {rutaDestino}");
+                }
             }
-            return $"PDF generado: {rutaDestino}";
+            catch (Exception ex)
+            {
+                throw new Exception($"Error al generar PDF: {ex.Message}", ex);
+            }
+            return rutaDestino;
+        }
+
+        private void GenerarPdfConITextSharp(string texto, string rutaDestino)
+        {
+            try
+            {
+                using (var document = new iTextSharp.text.Document())
+                {
+                    using (var writer = PdfWriter.GetInstance(document, new System.IO.FileStream(rutaDestino, System.IO.FileMode.Create)))
+                    {
+                        document.Open();
+
+                        var lines = (texto ?? "").Split(new[] { Environment.NewLine }, StringSplitOptions.None)
+                            .Take(500)
+                            .ToList();
+
+                        foreach (var line in lines)
+                        {
+                            var paragraph = new iTextSharp.text.Paragraph(line ?? "");
+                            document.Add(paragraph);
+                        }
+
+                        document.Close();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error al generar PDF con iTextSharp: {ex.Message}", ex);
+            }
         }
 
         #endregion

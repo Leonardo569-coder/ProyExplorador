@@ -8,6 +8,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
+using Microsoft.Extensions.Configuration;
 
 namespace ProyExplorador
 {
@@ -99,6 +100,40 @@ namespace ProyExplorador
             catch (Exception ex)
             {
                 MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        // Handler para abrir el Visualizador de Datos SQL
+        private void BtnVisualizadorSQL_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                // Obtener la cadena de conexión desde configuración
+                var config = new ConfigurationBuilder()
+                    .SetBasePath(System.IO.Directory.GetCurrentDirectory())
+                    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+                    .Build();
+
+                var connectionString = config.GetConnectionString("SqlServerConnection");
+
+                if (string.IsNullOrWhiteSpace(connectionString))
+                {
+                    MessageBox.Show(this, "No se encontró la cadena de conexión SQL Server en appsettings.json", 
+                        "Configuración", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                var ventana = new ProyExplorador.Views.SqlDataViewerWindow(connectionString)
+                {
+                    Owner = this
+                };
+
+                ventana.Show();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Error al abrir visualizador SQL: {ex.Message}", 
+                    "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 

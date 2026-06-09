@@ -351,6 +351,16 @@
                                         ToolTip="Abrir visualizador de datos"/>
 
 
+                                <!-- Nuevo: Visualizador SQL -->
+                                <Button Content="🗄️  Visualizador SQL"
+                                        x:Name="BtnVisualizadorSQL"
+                                        Cursor="Hand"
+                                        Height="41"
+                                        Margin="0,0,0,8"
+                                        Click="BtnVisualizadorSQL_Click"
+                                        Style="{StaticResource BtnSecondary}"
+                                        ToolTip="Abrir visualizador SQL"/>
+
                                 <!-- Nuevo: Calculadora -->
                                 <Button Content="🧮  Calculadora"
                                         x:Name="BtnCalculadora"
